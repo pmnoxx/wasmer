@@ -10,6 +10,7 @@ categories = ["wasm"]
 edition = "2018"
 
 [dependencies]
+backtrace = "0.3.54"
 nix = "0.15"
 page_size = "0.4"
 wasmparser = "0.51.3"

@@ -6,6 +6,7 @@ use nix::libc;
 use page_size;
 use std::ops::{Bound, RangeBounds};
 use std::{fs::File, os::unix::io::IntoRawFd, path::Path, ptr, slice, sync::Arc};
+use backtrace::Backtrace;
 
 unsafe impl Send for Memory {}
 unsafe impl Sync for Memory {}
@@ -28,19 +29,22 @@ impl Memory {
         let file = File::open(path)?;
 
         let file_len = file.metadata()?.len();
+        let aligned_file_len = round_up_to_page_size(file_len as usize, page_size::get());
 
         let raw_fd = RawFd::from_file(file);
+
 
         let ptr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
-                file_len as usize,
+                aligned_file_len,
                 protection.to_protect_const() as i32,
                 libc::MAP_PRIVATE,
                 raw_fd.0,
                 0,
             )
         };
+        println!("XXX1 mmap file {:?} {} {}", ptr, file_len, aligned_file_len);
 
         if ptr == -1 as _ {
             Err(MemoryCreationError::VirtualMemoryAllocationFailed(
@@ -50,7 +54,7 @@ impl Memory {
         } else {
             Ok(Self {
                 ptr: ptr as *mut u8,
-                size: file_len as usize,
+                size: aligned_file_len,
                 protection,
                 fd: Some(Arc::new(raw_fd)),
             })
@@ -68,25 +72,27 @@ impl Memory {
             });
         }
 
-        let size = round_up_to_page_size(size, page_size::get());
+        let aligned_size = round_up_to_page_size(size as usize, page_size::get());
+
 
         let ptr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
-                size,
+                aligned_size,
                 protection.to_protect_const() as i32,
                 libc::MAP_PRIVATE | libc::MAP_ANON,
                 -1,
                 0,
             )
         };
+        println!("XXX2 mmap prot {:?} {} {}", ptr, size, aligned_size);
 
         if ptr == -1 as _ {
             Err(errno::errno().to_string())
         } else {
             Ok(Self {
                 ptr: ptr as *mut u8,
-                size,
+                size: aligned_size,
                 protection,
                 fd: None,
             })
@@ -104,18 +110,23 @@ impl Memory {
             });
         }
 
-        let size = round_up_to_page_size(size, page_size::get());
-
+        let aligned_size = round_up_to_page_size(size, page_size::get());
         let ptr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
-                size,
+                aligned_size,
                 libc::PROT_NONE,
                 libc::MAP_PRIVATE | libc::MAP_ANON,
                 -1,
                 0,
             )
         };
+
+        println!("XXX3 mmap {:?} {} {}", ptr, size, aligned_size);
+        let bt = Backtrace::new();
+
+        println!("XXX4 st {:?}", bt);
+
 
         if ptr == -1 as _ {
             Err(MemoryCreationError::VirtualMemoryAllocationFailed(
@@ -125,7 +136,7 @@ impl Memory {
         } else {
             Ok(Self {
                 ptr: ptr as *mut u8,
-                size,
+                size: aligned_size,
                 protection: Protect::None,
                 fd: None,
             })
@@ -174,6 +185,7 @@ impl Memory {
 
     /// Split this memory into multiple memories by the given offset.
     pub fn split_at(mut self, offset: usize) -> (Memory, Memory) {
+        println!("XXX split at {} of {}", offset, self.size);
         let page_size = page_size::get();
         if offset % page_size == 0 {
             let second_ptr = unsafe { self.ptr.add(offset) };
@@ -223,6 +235,7 @@ impl Memory {
 impl Drop for Memory {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
+            println!("XXX unmap {}", self.size);
             let success = unsafe { libc::munmap(self.ptr as _, self.size) };
             assert_eq!(success, 0, "failed to unmap memory: {}", errno::errno());
         }
