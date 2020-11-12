@@ -235,7 +235,7 @@ impl Memory {
 impl Drop for Memory {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            println!("XXX unmap {}", self.size);
+            println!("XXX unmap {} {}", self.ptr, self.size);
             let success = unsafe { libc::munmap(self.ptr as _, self.size) };
             assert_eq!(success, 0, "failed to unmap memory: {}", errno::errno());
         }
